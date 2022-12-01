@@ -1,8 +1,17 @@
 package part2_lowlevelserver
 
 
-import akka.actor.{Actor, ActorLogging, ActorRef, ActorSystem, Props}
+import akka.actor.{Actor, ActorLogging, ActorSystem, Props}
+import akka.http.scaladsl.Http
+import akka.http.scaladsl.model._
+import akka.pattern.ask
 import akka.stream.ActorMaterializer
+import akka.util.{ByteString, Timeout}
+import part2_lowlevelserver.GuitarDB.CreateGuitar
+
+import scala.concurrent.Future
+import scala.concurrent.duration.DurationInt
+
 // step #1
 import spray.json._ // contains a suite of convertors, implicits, utilities that we use with conversions...
 
@@ -38,23 +47,6 @@ class GuitarDB extends Actor with ActorLogging {
       currentGuitarId += 1
   }
 }
-
-class Helper extends Actor with ActorLogging {
-  import GuitarDB._
-  val actor: ActorRef = context.actorOf(Props[GuitarDB], "C")
-
-  override def receive: Receive = {
-    case FindGuitar(id) =>
-      actor ! FindGuitar(id)
-    case CreateGuitar(guitar) =>
-      actor ! CreateGuitar(guitar)
-    case FindAllGuitars =>
-      actor ! FindAllGuitars
-    case msg: Any =>
-      log.info(s"----------------$msg")
-  }
-}
-
 
 // step #2
 /**
@@ -107,16 +99,65 @@ object LowLevelRest extends App with GuitarStoreJsonProtocol {
    * "guitarFormat" implemented earlier*/
 
 
+  /* SETUP */
+  val guitarDb = system.actorOf(Props[GuitarDB], "lowLevelGuitarDB")
+  val guitarList = List(Guitar("Fender", "Stratocaster"), Guitar("Gibson", "Les paul"), Guitar("Martin", "LX1"))
+  guitarList.foreach(guitar => guitarDb ! CreateGuitar(guitar))
 
 
-  /*import GuitarDB._
-  val actor = system.actorOf(Props[Helper], "Helper")
-  actor ! CreateGuitar(Guitar("MAKE1", "MODEL1"))
-  actor ! FindAllGuitars
-  actor ! FindGuitar(0)
-  actor ! CreateGuitar(Guitar("MAKE2", "MODEL2"))
-  actor ! FindAllGuitars
-  actor ! FindGuitar(1)
-  Thread.sleep(200)
-  actor ! FindGuitar(2)*/
+  /*Server code with AsyncHandler fn: HttpRequest => Future[HttpResponse]*/
+  implicit val timeout: Timeout = 2.seconds
+  import GuitarDB._
+
+  val requestHandler: HttpRequest => Future[HttpResponse] = {
+    case HttpRequest(HttpMethods.GET, Uri.Path("/api/guitar"), _, _, _) =>
+      val guitarsFuture: Future[List[Guitar]] = (guitarDb ? FindAllGuitars).mapTo[List[Guitar]]
+      guitarsFuture.map { guitars =>
+        HttpResponse(
+          entity = HttpEntity(
+            ContentTypes.`application/json`,
+            guitars.toJson.prettyPrint // implicit required...
+          )
+        )
+      }// Future[List[Guitar]] to Future[HttpResponse] (GET ALL GUITARS)
+
+    case HttpRequest(HttpMethods.POST, Uri.Path("/api/guitar"), _, entity, _) =>
+      // entities are a source[ByteString]
+      val strictEntityFuture: Future[HttpEntity.Strict] = entity.toStrict(3.seconds)
+      /**akka will bring all the contents of this entity into memory from http-conn during the course of 3 seconds
+       * Because we don't know when this operation will succeed, AKKA-HTTP returns a future containing the
+       * data from this entity.*/
+      strictEntityFuture.flatMap{ strictEntity =>
+        val guitarJson: ByteString = strictEntity.data
+        val guitarJsonString: String = guitarJson.utf8String
+        val guitar: Guitar = guitarJsonString.parseJson.convertTo[Guitar]
+
+        val guitarCreatedFuture: Future[GuitarCreated] = (guitarDb ? CreateGuitar(guitar)).mapTo[GuitarCreated]
+        /*We have two Futures, instead of strictEntityFuture.map, we can strictEntityFuture.flaMap. So the function
+         * inside needs to return Future[HttpResponse].
+        * Now, we will convert Future[GuitarCreated] into Future[HttpResponse]*/
+        guitarCreatedFuture.map{ _ =>
+          HttpResponse(StatusCodes.OK)
+        }
+      }
+
+    case request: HttpRequest =>
+      request.discardEntityBytes()
+      Future {
+        HttpResponse(status = StatusCodes.NotFound)
+      }
+    /** If We don't reply/respond to an existing request, that will be interpreted as backPressure.
+     *  That backPressure is interpreted by the Streams based akka-http-server and that will be propagated
+     *  down to TCP layer. which results in slower HttpRequests...*/
+  }
+
+  Http().bindAndHandleAsync(requestHandler, "localhost", 8080)
+    /* Once we run the application and hit (using HTTPie)
+
+    (GET)localhost:8080/api/guitar  -> Console => searching for all guitars, HTTPie => we get all the guitars
+
+    (POST)localhost:8080/api/guitar  -> Console => Adding Guitar Guitar(Taylor,914) with id: 3,
+    HTTPie => HTTP/1.1 200 OK
+
+    BROWSER-> localhost:8080/api/guitar/   => We will see the added Guitar to the list as json*/
 }
