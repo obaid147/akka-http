@@ -257,7 +257,9 @@ object LowLevelAPI extends App {
     case HttpRequest(HttpMethods.GET, Uri.Path("/search"), _, _, _) =>
       HttpResponse(
         StatusCodes.Found,
-        headers = List(Location("http://google.com"))
+        headers = List(Location("https://www.google.co.in"))
+        /*inspect in browser -> hit http://localhost:8388/search -> Network -> Name = search with 302
+        * And the header under Response Headers ie:- "Location" that we manually mentioned above*/
       )
     case request: HttpRequest =>
       request.discardEntityBytes()
@@ -279,6 +281,6 @@ object LowLevelAPI extends App {
 
   val bindingFuture = Http().bindAndHandle(exerciseRequestHandler, "localhost", 8388)
 
-  bindingFuture.flatMap(binding => binding.unbind())
-  .onComplete(_ => system.terminate())
+  /*bindingFuture.flatMap(binding => binding.unbind()) // unbind() returns the future.
+  .onComplete(_ => system.terminate())*/ // uncomment to shutdown the akka-http server when future is complete.
 }
