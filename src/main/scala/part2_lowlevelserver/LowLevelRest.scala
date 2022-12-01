@@ -16,10 +16,12 @@ object GuitarDB {
 
 class GuitarDB extends Actor with ActorLogging {
   import GuitarDB._
-  var guitars: Map[Int, Guitar] = Map()
-  var currentGuitarId: Int = 0
+  //var guitars: Map[Int, Guitar] = Map()
+  //var currentGuitarId: Int = 0
 
-  override def receive: Receive = {
+  override def receive: Receive = handler(Map(), 0)
+
+  def handler(guitars: Map[Int, Guitar], currentGuitarId: Int): Receive = {
     case FindAllGuitars =>
       log.info("searching for all guitars")
       sender() ! guitars.values.toList
@@ -28,9 +30,11 @@ class GuitarDB extends Actor with ActorLogging {
       sender() ! guitars.get(id)
     case CreateGuitar(guitar) =>
       log.info(s"Adding Guitar $guitar with id: $currentGuitarId")
-      guitars += (currentGuitarId -> guitar)
       sender() ! GuitarCreated(currentGuitarId)
-      currentGuitarId += 1
+      context.become(handler(Map(currentGuitarId -> guitar), currentGuitarId+1))
+      //guitars += (currentGuitarId -> guitar)
+
+      //currentGuitarId += 1
 
   }
 
