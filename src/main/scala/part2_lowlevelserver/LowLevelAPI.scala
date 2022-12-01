@@ -248,7 +248,7 @@ object LowLevelAPI extends App {
             |<br><br>
             |<div style="color: red">
             | <h2><center>Abouts page</center></h2>
-            |</div?
+            |</div>
             |</body>
             |</html>
             |""".stripMargin
