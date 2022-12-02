@@ -19,13 +19,19 @@ import spray.json._ // contains a suite of convertors, implicits, utilities that
 /**
  * Marshalling-Unmarshalling JSON
  * */
-case class Guitar(make: String, model: String)
+case class Guitar(make: String, model: String, quantity: Int = 0)
 
+/** EXERCISE Enhance Guitar case class with quantity field, by default 0
+ * - GET /api/guitar/inventory?inStock=true/false which returns the guitar in stock as a json.
+ * - POST /api/guitar/inventory?id=X&quantity=Y which adds Y guitars to the stock for guitar id X.
+ */
 object GuitarDB {
   case class CreateGuitar(guitar: Guitar)
   case class GuitarCreated(id: Int)
   case class FindGuitar(id: Int)
   case object FindAllGuitars
+  case class AddQuantity(id: Int, quantity: Int) // POST api/guitar/inventory
+  case class FindGuitarsInStock(inStock: Boolean) // GET api/guitar/inventory
 }
 
 class GuitarDB extends Actor with ActorLogging {
@@ -46,6 +52,18 @@ class GuitarDB extends Actor with ActorLogging {
       sender() ! GuitarCreated(currentGuitarId)
       guitars += (currentGuitarId -> guitar)
       currentGuitarId += 1
+    case AddQuantity(id, quantity) =>
+      log.info(s"Trying to add $quantity items for guitar $id")
+      val guitar = guitars.get(id)
+      val newGuitar: Option[Guitar] = guitar.map{
+        case Guitar(make, model, q) => Guitar(make, model, q + quantity)
+      }
+      newGuitar.foreach(guitar => guitars = guitars + (id -> guitar))
+      sender() ! newGuitar
+    case FindGuitarsInStock(inStock) =>
+      log.info(s"Searching for all guitars ${if(inStock)"in" else "out of"} stock")
+      if(inStock) sender() ! guitars.values.filter(_.quantity > 0)
+      else sender() ! guitars.values.filter(_.quantity==0)
   }
 }
 
@@ -55,8 +73,8 @@ class GuitarDB extends Actor with ActorLogging {
  */
 trait GuitarStoreJsonProtocol extends DefaultJsonProtocol {
   // step #3
-  implicit val guitarFormat: RootJsonFormat[Guitar] = jsonFormat2(Guitar)
-  // being able to convert Guitar into json, json2 as Guitar take 2 args
+  implicit val guitarFormat: RootJsonFormat[Guitar] = jsonFormat3(Guitar)
+  // being able to convert Guitar into json, json2 as Guitar take 3 args (exercise) otherwise jsonFormat2
 }
 
 object LowLevelRest extends App with GuitarStoreJsonProtocol {
@@ -90,8 +108,9 @@ object LowLevelRest extends App with GuitarStoreJsonProtocol {
   val simpleGuitarJsonString =
     """
       |{
-      |  "make": "Fender",
-        |  "model": "Stratocaster"
+        |  "make": "Fender",
+        |  "model": "Stratocaster",
+        |  "quantity": 3
       |}
       |""".stripMargin
 
@@ -140,6 +159,39 @@ object LowLevelRest extends App with GuitarStoreJsonProtocol {
   }
 
   val requestHandler: HttpRequest => Future[HttpResponse] = {
+    case HttpRequest(HttpMethods.POST, uri@Uri.Path("/api/guitar/inventory"), _, _, _) =>
+      val query = uri.query()
+      val guitarId: Option[Int] = query.get("id").map(_.toInt)
+      val guitarQuantity: Option[Int] = query.get("quantity").map(_.toInt)
+
+      val validGuitarResponseFuture: Option[Future[HttpResponse]] = for {
+        id <- guitarId
+        quantity <- guitarQuantity
+      } yield {
+        val newGuitarFuture: Future[Option[Guitar]] = (guitarDb ? AddQuantity(id, quantity)).mapTo[Option[Guitar]]
+        newGuitarFuture.map(_ => HttpResponse(StatusCodes.OK))
+      }
+      validGuitarResponseFuture.getOrElse(Future(HttpResponse(StatusCodes.BadRequest)))
+
+    case HttpRequest(HttpMethods.GET, uri@Uri.Path("/api/guitar/inventory"), _, _, _) =>
+      val query = uri.query()
+      val inStockOption = query.get("inStock").map(_.toBoolean)
+      inStockOption match {
+        case Some(inStock) =>
+          val guitarsFuture: Future[List[Guitar]] = (guitarDb ? FindGuitarsInStock(inStock)).mapTo[List[Guitar]]
+          guitarsFuture.map{ guitars =>
+            HttpResponse(
+              entity = HttpEntity(
+              ContentTypes.`application/json`,
+              guitars.toJson.prettyPrint
+              )
+            )
+          }
+        case None => Future(HttpResponse(StatusCodes.BadRequest))
+      }
+
+
+
     case HttpRequest(HttpMethods.GET, uri@Uri.Path("/api/guitar"), _, _, _) =>
       /* Query parameter*/
       val query = uri.query() // query object <=> Map[String, String]
