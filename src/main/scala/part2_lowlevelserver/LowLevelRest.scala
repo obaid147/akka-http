@@ -198,4 +198,8 @@ object LowLevelRest extends App with GuitarStoreJsonProtocol {
 
     BROWSER-> localhost:8080/api/guitar/   => We will see the added Guitar to the list as json*/
 
+  /** EXERCISE Enhance Guitar case class with quantity field, by default 0
+   * - GET /api/guitar/inventory?inStock=true/false which returns the guitar in stock as a json.
+   * - POST /api/guitar/inventory?id=X&quantity=Y which adds Y guitars to the stock for guitar id X.
+   */
 }
