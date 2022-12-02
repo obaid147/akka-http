@@ -3,6 +3,7 @@ package part2_lowlevelserver
 
 import akka.actor.{Actor, ActorLogging, ActorSystem, Props}
 import akka.http.scaladsl.Http
+import akka.http.scaladsl.model.Uri.Query
 import akka.http.scaladsl.model._
 import akka.pattern.ask
 import akka.stream.ActorMaterializer
@@ -20,6 +21,10 @@ import spray.json._ // contains a suite of convertors, implicits, utilities that
  * */
 case class Guitar(make: String, model: String)
 
+/** EXERCISE Enhance Guitar case class with quantity field, by default 0
+ * - GET /api/guitar/inventory?inStock=true/false which returns the guitar in stock as a json.
+ * - POST /api/guitar/inventory?id=X&quantity=Y which adds Y guitars to the stock for guitar id X.
+ */
 object GuitarDB {
   case class CreateGuitar(guitar: Guitar)
   case class GuitarCreated(id: Int)
@@ -65,7 +70,8 @@ object LowLevelRest extends App with GuitarStoreJsonProtocol {
   import system.dispatcher
 
   /* GET request on localhost:8080/api/guitar => response(all guitars in store) in JSON
-  *  POST req on localhost:8080/api/guitar => Insert guitar into the store ie: DB.
+  *  GET on localhost:8080/api/guitar?id=X    => fetch guitar associated with id=X
+  *  POST req on localhost:8080/api/guitar    => Insert guitar into the store ie: DB.
   */
 
   //serialize our response(eg: guitar list) to JSON and pass that as an http entity(payload http response)
@@ -109,18 +115,53 @@ object LowLevelRest extends App with GuitarStoreJsonProtocol {
   implicit val timeout: Timeout = 2.seconds
   import GuitarDB._
 
-  val requestHandler: HttpRequest => Future[HttpResponse] = {
-    case HttpRequest(HttpMethods.GET, Uri.Path("/api/guitar"), _, _, _) =>
-      val guitarsFuture: Future[List[Guitar]] = (guitarDb ? FindAllGuitars).mapTo[List[Guitar]]
-      guitarsFuture.map { guitars =>
-        HttpResponse(
-          entity = HttpEntity(
-            ContentTypes.`application/json`,
-            guitars.toJson.prettyPrint // implicit required...
-          )
-        )
-      }// Future[List[Guitar]] to Future[HttpResponse] (GET ALL GUITARS)
+  def getGuitar(query: Query): Future[HttpResponse] = {
+    val id = query.get("id")
+    try {
+      id.map(_.toInt)
+       // query.get("id") returns Option[String], needed Option[Int]
+    }catch {
+      case _: Throwable =>
+        HttpResponse(StatusCodes.InternalServerError)
+        println("---Exception OCCURRED!!! Please use the ID---")
+    }
 
+    val guitarId = query.get("id").map(_.toInt)
+    guitarId match {
+      case None => Future(HttpResponse(StatusCodes.NotFound)) // /api/guitar?id=      => 404
+      case Some(id: Int) =>
+        val guitarFuture: Future[Option[Guitar]] = (guitarDb ? FindGuitar(id)).mapTo[Option[Guitar]]
+        guitarFuture.map{
+          case None => HttpResponse(StatusCodes.NotFound) // /api/guitar?id=IdThatDoesn'tExistInDB
+          case Some(guitar) =>
+            HttpResponse(
+              entity = HttpEntity(
+                ContentTypes.`application/json`,
+                guitar.toJson.prettyPrint
+            ))
+        }
+    }
+  }
+
+  val requestHandler: HttpRequest => Future[HttpResponse] = {
+    case HttpRequest(HttpMethods.GET, uri@Uri.Path("/api/guitar"), _, _, _) =>
+      /* Query parameter*/
+      val query = uri.query() // query object <=> Map[String, String]
+
+      if (query.isEmpty) {
+        val guitarsFuture: Future[List[Guitar]] = (guitarDb ? FindAllGuitars).mapTo[List[Guitar]]
+        guitarsFuture.map { guitars =>
+          HttpResponse(
+            entity = HttpEntity(
+              ContentTypes.`application/json`,
+              guitars.toJson.prettyPrint // implicit required...
+            )
+          )
+        }// Future[List[Guitar]] to Future[HttpResponse] (GET ALL GUITARS)
+      } else {
+        // fetch guitar associated to guitar Id, localhost:8080/api/guitar?id=1&id=2
+        getGuitar(query)
+      }
     case HttpRequest(HttpMethods.POST, Uri.Path("/api/guitar"), _, entity, _) =>
       // entities are a source[ByteString]
       val strictEntityFuture: Future[HttpEntity.Strict] = entity.toStrict(3.seconds)
@@ -139,7 +180,7 @@ object LowLevelRest extends App with GuitarStoreJsonProtocol {
         guitarCreatedFuture.map{ _ =>
           HttpResponse(StatusCodes.OK)
         }
-      }
+      }// Insert a guitar into the store
 
     case request: HttpRequest =>
       request.discardEntityBytes()
@@ -160,4 +201,10 @@ object LowLevelRest extends App with GuitarStoreJsonProtocol {
     HTTPie => HTTP/1.1 200 OK
 
     BROWSER-> localhost:8080/api/guitar/   => We will see the added Guitar to the list as json*/
+
+
+  /** EXERCISE Enhance Guitar case class with quantity field, by default 0
+   * - GET /api/guitar/inventory?inStock=true/false which returns the guitar in stock as a json.
+   * - POST /api/guitar/inventory?id=X&quantity=Y which adds Y guitars to the stock for guitar id X.
+   */
 }
