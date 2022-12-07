@@ -1,0 +1,34 @@
+<html>
+    <body>
+        <head>
+            <script>
+                var exampleSocket = new WebSocket("ws://localhost:8080/greeter");
+                // instead of http/https, we are using ws (websocket)
+                console.log("starting websocket....");
+
+                exampleSocket.onmessage = function(event){
+                    // client receives msg from server. onmessage is a member of ws
+                    var newChild = document.createElement("div");
+                    newChild.innerText = event.data;
+                    // event.data is whatever data server sends
+                    document.getElementById("1").appendChild(newChild);
+                    //append child to div from body.
+                };
+
+                exampleSocket.onopen = function(event){
+                    // onopen is a mamber of ws
+                    exampleSocket.send("socket seems to be open...");
+                    // client will send this message to server and can be seen by our akka-http server.
+                };
+
+                // When socket is open, we will send message to server
+                exampleSocket.send("socket says: Hello, Server!!");
+            </script>
+
+        </head>
+    </body>
+        Starting websocket...
+        <div id="1">
+            <!--client receives msg from server are manipulated is JS -->
+        </div>
+</html>
