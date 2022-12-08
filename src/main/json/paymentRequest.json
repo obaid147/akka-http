@@ -1,0 +1,9 @@
+{
+  "creditCard": {
+    "serialNumber": "1010-0010-1002-2312",
+    "securityCode": "123",
+    "account": "jk-br-10-rt"
+  },
+  "receiverAccount": "pk-k1-45-kb",
+  "amount": 99
+}
